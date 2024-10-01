@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Error};
-use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use prettytable::{Cell, Row, Table};
 use serde_json::json;
 use serde_json::Value as Json;
@@ -129,7 +129,6 @@ impl SrumAnalyser {
 
         // Global SRUM parameters
         for (table_guid, extension) in srum_extensions_reg.iter() {
-            let table_guid = table_guid;
             let table_name = extension["(default)"]
                 .as_str()
                 .with_context(|| "unable to get the data of the (default) registry value")?;
@@ -361,10 +360,9 @@ impl SrumAnalyser {
                         if let Some(Json::Number(win_ts)) = srum_entry.get(win_ts_column_name) {
                             // Check if it's an integer
                             if let Some(integer) = win_ts.as_i64() {
-                                let naive = win32_ts_to_datetime(integer as u64).with_context(
+                                let datetime = win32_ts_to_datetime(integer as u64).with_context(
                                     || "unable to convert Windows timestamp column value to DateTime",
                                 )?;
-                                let datetime = Utc.from_utc_datetime(&naive);
                                 let datetime_form =
                                     datetime.to_rfc3339_opts(SecondsFormat::Secs, true);
 

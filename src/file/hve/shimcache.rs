@@ -113,7 +113,6 @@ pub struct ShimcacheArtefact {
     pub entries: Vec<ShimcacheEntry>,
     pub last_update_ts: DateTime<Utc>,
     pub version: ShimcacheVersion,
-    pub controlset: u32,
 }
 
 impl Display for ShimcacheEntry {
@@ -275,7 +274,6 @@ impl super::Parser {
             entries: shimcache_entries,
             last_update_ts: shimcache_last_update_ts,
             version: shimcache_version,
-            controlset,
         })
     }
 }
@@ -297,13 +295,12 @@ fn utf16_to_string(bytes: &[u8]) -> crate::Result<String> {
 mod windows_10_cache {
     use super::{utf16_to_string, CPUArchitecture, EntryType, ShimcacheEntry};
 
-    use chrono::{TimeZone, Utc};
     use lazy_static::lazy_static;
     use regex::Regex;
 
     use crate::file::win32_ts_to_datetime;
 
-    pub fn parse(shimcache_bytes: &Vec<u8>, controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
+    pub fn parse(shimcache_bytes: &[u8], controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
         let mut shimcache_entries: Vec<ShimcacheEntry> = Vec::new();
         let mut index = u32::from_le_bytes(
             shimcache_bytes
@@ -436,8 +433,7 @@ mod windows_10_cache {
                 EntryType::File { path }
             };
             let last_modified_ts = if last_modified_time_utc_win32 != 0 {
-                let last_modified_time_utc = win32_ts_to_datetime(last_modified_time_utc_win32)?;
-                let last_modified_date_time = Utc.from_utc_datetime(&last_modified_time_utc);
+                let last_modified_date_time = win32_ts_to_datetime(last_modified_time_utc_win32)?;
                 Some(last_modified_date_time)
             } else {
                 None
@@ -465,11 +461,9 @@ mod windows_10_cache {
 mod windows7x64_windows2008r2_cache {
     use super::{utf16_to_string, EntryType, InsertFlag, ShimcacheEntry};
 
-    use chrono::{TimeZone, Utc};
-
     use crate::file::win32_ts_to_datetime;
 
-    pub fn parse(shimcache_bytes: &Vec<u8>, controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
+    pub fn parse(shimcache_bytes: &[u8], controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
         let mut shimcache_entries: Vec<ShimcacheEntry> = Vec::new();
         let mut index = 4;
         let entry_count = u32::from_le_bytes(
@@ -557,8 +551,7 @@ mod windows7x64_windows2008r2_cache {
                     .to_vec(),
             );
             let last_modified_ts = if last_modified_time_utc_win32 != 0 {
-                let last_modified_time_utc = win32_ts_to_datetime(last_modified_time_utc_win32)?;
-                let last_modified_date_time = Utc.from_utc_datetime(&last_modified_time_utc);
+                let last_modified_date_time = win32_ts_to_datetime(last_modified_time_utc_win32)?;
                 Some(last_modified_date_time)
             } else {
                 None
@@ -592,11 +585,9 @@ mod windows7x64_windows2008r2_cache {
 mod windows7x86_cache {
     use super::{utf16_to_string, EntryType, InsertFlag, ShimcacheEntry};
 
-    use chrono::{TimeZone, Utc};
-
     use crate::file::win32_ts_to_datetime;
 
-    pub fn parse(shimcache_bytes: &Vec<u8>, controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
+    pub fn parse(shimcache_bytes: &[u8], controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
         let mut shimcache_entries: Vec<ShimcacheEntry> = Vec::new();
         let mut index = 4;
         let entry_count = u32::from_le_bytes(
@@ -682,8 +673,7 @@ mod windows7x86_cache {
                     .to_vec(),
             );
             let last_modified_ts = if last_modified_time_utc_win32 != 0 {
-                let last_modified_time_utc = win32_ts_to_datetime(last_modified_time_utc_win32)?;
-                let last_modified_date_time = Utc.from_utc_datetime(&last_modified_time_utc);
+                let last_modified_date_time = win32_ts_to_datetime(last_modified_time_utc_win32)?;
                 Some(last_modified_date_time)
             } else {
                 None
@@ -717,11 +707,9 @@ mod windows7x86_cache {
 mod windows8_cache {
     use super::{utf16_to_string, EntryType, InsertFlag, ShimcacheEntry};
 
-    use chrono::{TimeZone, Utc};
-
     use crate::file::win32_ts_to_datetime;
 
-    pub fn parse(shimcache_bytes: &Vec<u8>, controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
+    pub fn parse(shimcache_bytes: &[u8], controlset: u32) -> crate::Result<Vec<ShimcacheEntry>> {
         let mut shimcache_entries: Vec<ShimcacheEntry> = Vec::new();
         let e = || anyhow!("Shimcache byte indexing error!");
         let cache_signature = std::str::from_utf8(shimcache_bytes.get(128..132).ok_or_else(e)?)?;
@@ -809,8 +797,7 @@ mod windows8_cache {
             let executed =
                 Some(insert_flags & InsertFlag::Executed as u32 == InsertFlag::Executed as u32);
             let last_modified_ts = if last_modified_time_utc_win32 != 0 {
-                let last_modified_time_utc = win32_ts_to_datetime(last_modified_time_utc_win32)?;
-                let last_modified_date_time = Utc.from_utc_datetime(&last_modified_time_utc);
+                let last_modified_date_time = win32_ts_to_datetime(last_modified_time_utc_win32)?;
                 Some(last_modified_date_time)
             } else {
                 None

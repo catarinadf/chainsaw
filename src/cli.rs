@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::io::*;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use prettytable::{cell, format, Row, Table};
@@ -165,7 +165,10 @@ fn agg_to_doc<'a>(
     }
     let first = documents.first().expect("missing document");
     let mut doc: FxHashMap<String, Value> = FxHashMap::default();
-    for (k, v) in scratch {
+    let mut keys = scratch.keys().collect::<Vec<_>>();
+    keys.sort();
+    for k in keys {
+        let v = scratch.get(k).expect("could not get value");
         let mut v = v.iter().cloned().collect::<Vec<_>>();
         v.sort();
         // NOTE: Lazy way of re-nesting object...
@@ -176,7 +179,28 @@ fn agg_to_doc<'a>(
         while let Some(part) = parts.next() {
             if let Value::Object(o) = entry {
                 if parts.peek().is_none() {
-                    o.insert(part.to_owned(), Value::String(v.join(", ")));
+                    if part.ends_with(']') && part.contains('[') {
+                        let mut ki = part.split('[');
+                        let k = ki.next().expect("missing key");
+                        let i: usize = match ki
+                            .next()
+                            .and_then(|i| i.strip_suffix(']'))
+                            .and_then(|i| i.parse::<usize>().ok())
+                        {
+                            Some(i) => i,
+                            None => break,
+                        };
+                        if let Value::Array(vec) =
+                            o.entry(k.to_owned()).or_insert(Value::Array(vec![]))
+                        {
+                            for _ in 0..(i - vec.len()) {
+                                vec.push(Value::Null);
+                            }
+                            vec.push(Value::String(v.join(", ")));
+                        }
+                    } else {
+                        o.insert(part.to_owned(), Value::String(v.join(", ")));
+                    }
                     break;
                 } else {
                     entry = o
@@ -190,7 +214,7 @@ fn agg_to_doc<'a>(
     }
     Ok(crate::hunt::Document {
         kind: first.kind.clone(),
-        path: first.path.clone(),
+        path: first.path,
         data: bincode::serialize(&Value::Object(doc))
             .expect("could not serialise collated documents"),
     })
@@ -225,16 +249,9 @@ pub fn print_log(
         let mut columns = vec![];
 
         let localised = if let Some(timezone) = timezone {
-            timezone
-                .from_local_datetime(&hit.timestamp)
-                .single()
-                .expect("failed to localise timestamp")
-                .to_rfc3339()
+            timezone.from_utc_datetime(&hit.timestamp).to_rfc3339()
         } else if local {
-            Utc.from_local_datetime(&hit.timestamp)
-                .single()
-                .expect("failed to localise timestamp")
-                .to_rfc3339()
+            Local.from_utc_datetime(&hit.timestamp).to_rfc3339()
         } else {
             Utc.from_utc_datetime(&hit.timestamp).to_rfc3339()
         };
@@ -368,12 +385,12 @@ pub fn print_detections(
         for hit in &detection.hits {
             let hunt = &hunts.get(&hit.hunt).expect("could not get hunt");
             let rule = &rules.get(&hit.rule).expect("could not get rule");
-            let hits = hits.entry((&hunt.group, &hit.timestamp)).or_insert(vec![]);
+            let hits = hits.entry((&hunt.group, &hit.timestamp)).or_default();
             (*hits).push(Hit { hunt, rule });
         }
         for ((group, timestamp), mut hits) in hits {
             hits.sort_by(|x, y| x.rule.name().cmp(y.rule.name()));
-            let groups = groups.entry(group).or_insert(vec![]);
+            let groups = groups.entry(group).or_default();
             (*groups).push(Grouping {
                 kind: &detection.kind,
                 timestamp,
@@ -407,16 +424,9 @@ pub fn print_detections(
 
             for grouping in group {
                 let mut localised = if let Some(timezone) = timezone {
-                    timezone
-                        .from_local_datetime(grouping.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    timezone.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 } else if local {
-                    Utc.from_local_datetime(grouping.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    Local.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 } else {
                     Utc.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 };
@@ -523,7 +533,7 @@ pub fn print_detections(
                         if !seen.contains_key(&id) {
                             rows.push((id, cells));
                         }
-                        let rules = seen.entry(id).or_insert(vec![]);
+                        let rules = seen.entry(id).or_default();
                         (*rules).push(hit.rule);
                     }
                 }
@@ -774,12 +784,12 @@ pub fn print_csv(
         for hit in &detection.hits {
             let hunt = &hunts.get(&hit.hunt).expect("could not get hunt");
             let rule = &rules.get(&hit.rule).expect("could not get rule");
-            let hits = hits.entry((&hunt.group, &hit.timestamp)).or_insert(vec![]);
+            let hits = hits.entry((&hunt.group, &hit.timestamp)).or_default();
             (*hits).push(Hit { hunt, rule });
         }
         for ((group, timestamp), mut hits) in hits {
             hits.sort_by(|x, y| x.rule.name().cmp(y.rule.name()));
-            let groups = groups.entry(group).or_insert(vec![]);
+            let groups = groups.entry(group).or_default();
             (*groups).push(Grouping {
                 kind: &detection.kind,
                 timestamp,
@@ -813,16 +823,9 @@ pub fn print_csv(
 
             for grouping in group {
                 let localised = if let Some(timezone) = timezone {
-                    timezone
-                        .from_local_datetime(grouping.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    timezone.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 } else if local {
-                    Utc.from_local_datetime(grouping.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    Local.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 } else {
                     Utc.from_utc_datetime(grouping.timestamp).to_rfc3339()
                 };
@@ -911,7 +914,7 @@ pub fn print_csv(
                         if !seen.contains_key(&id) {
                             rows.push((id, cells));
                         }
-                        let rules = seen.entry(id).or_insert(vec![]);
+                        let rules = seen.entry(id).or_default();
                         (*rules).push(hit.rule);
                     }
                 }
@@ -983,16 +986,9 @@ pub fn print_json(
                 let hunt = hunts.get(&hit.hunt).expect("could not get rule!");
                 let rule = rules.get(&hit.rule).expect("could not get rule!");
                 let localised = if let Some(timezone) = timezone {
-                    timezone
-                        .from_local_datetime(&hit.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    timezone.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 } else if local {
-                    Utc.from_local_datetime(&hit.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    Local.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 } else {
                     Utc.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 };
@@ -1055,16 +1051,9 @@ pub fn print_jsonl(
             let mut scratch = Vec::with_capacity(d.hits.len());
             for hit in &d.hits {
                 let localised = if let Some(timezone) = timezone {
-                    timezone
-                        .from_local_datetime(&hit.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    timezone.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 } else if local {
-                    Utc.from_local_datetime(&hit.timestamp)
-                        .single()
-                        .expect("failed to localise timestamp")
-                        .to_rfc3339()
+                    Local.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 } else {
                     Utc.from_utc_datetime(&hit.timestamp).to_rfc3339()
                 };

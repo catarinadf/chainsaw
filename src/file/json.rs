@@ -53,8 +53,17 @@ impl Iterator for ParserIter {
 }
 
 impl Searchable for Json {
-    fn matches(&self, regex: &RegexSet) -> bool {
-        regex.is_match(&self.to_string())
+    fn matches(&self, regex: &RegexSet, match_any: &bool) -> bool {
+        if *match_any {
+            regex.is_match(&self.to_string().replace(r"\\", r"\"))
+        } else {
+            regex
+                .matches(&self.to_string().replace(r"\\", r"\"))
+                .into_iter()
+                .collect::<Vec<_>>()
+                .len()
+                == regex.len()
+        }
     }
 }
 

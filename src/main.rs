@@ -52,10 +52,10 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Dump an artefact into a different format.
+    /// Dump artefacts into a different format.
     Dump {
-        /// The path to an artefact to dump.
-        path: PathBuf,
+        /// The paths containing files to dump.
+        path: Vec<PathBuf>,
 
         /// Dump in json format.
         #[arg(group = "format", short = 'j', long = "json")]
@@ -66,6 +66,9 @@ enum Command {
         /// Allow chainsaw to try and load files it cannot identify.
         #[arg(long = "load-unknown")]
         load_unknown: bool,
+        /// Only dump files with the provided extension.
+        #[arg(long = "extension")]
+        extension: Option<String>,
         /// A path to output results to.
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
@@ -184,7 +187,7 @@ enum Command {
         tau: bool,
     },
 
-    /// Search through forensic artefacts for keywords.
+    /// Search through forensic artefacts for keywords or patterns.
     Search {
         /// A string or regular expression pattern to search for.
         /// Not used when -e or -t is specified.
@@ -225,6 +228,9 @@ enum Command {
         /// Output the timestamp using the local machine's timestamp.
         #[arg(long = "local", group = "tz")]
         local: bool,
+        /// Require any of the provided patterns to be found to constitute a match.
+        #[arg(long = "match-any")]
+        match_any: bool,
         /// The path to output results to.
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
@@ -234,7 +240,8 @@ enum Command {
         /// Continue to search when an error is encountered.
         #[arg(long = "skip-errors")]
         skip_errors: bool,
-        /// Tau expressions to search with. e.g. 'Event.System.EventID: =4104'
+        /// Tau expressions to search with. e.g. 'Event.System.EventID: =4104'.
+        /// Multiple conditions are logical ANDs unless the 'match-any' flag is specified
         #[arg(short = 't', long = "tau", number_of_values = 1)]
         tau: Option<Vec<String>>,
         /// The field that contains the timestamp.
@@ -385,6 +392,7 @@ fn run() -> Result<()> {
             json,
             jsonl,
             load_unknown,
+            extension,
             output,
             quiet,
             skip_errors,
@@ -393,51 +401,81 @@ fn run() -> Result<()> {
             if !args.no_banner {
                 print_title();
             }
-            let mut reader = Reader::load(&path, load_unknown, skip_errors)?;
             cs_eprintln!(
-                "[+] Dumping the contents of forensic artefact - {}...",
-                path.display()
+                "[+] Dumping the contents of forensic artefacts from: {} (extensions: {})",
+                path
+                    .iter()
+                    .map(|r| r.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                extension.clone().unwrap_or("*".to_string())
             );
+
             if json {
                 cs_print!("[");
             }
+
+            let mut files = vec![];
+            let mut size = ByteSize::mb(0);
+            let mut extensions: Option<HashSet<String>> = None;
+            if let Some(extension) = extension {
+                extensions = Some(HashSet::from([extension]));
+            }
+            for path in &path {
+                let res = get_files(path, &extensions, skip_errors)?;
+                for i in &res {
+                    size += i.metadata()?.len();
+                }
+                files.extend(res);
+            }
+            if files.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No compatible files were found in the provided paths",
+                ));
+            } else {
+                cs_eprintln!("[+] Loaded {} forensic artefacts ({})", files.len(), size);
+            }
+
             let mut first = true;
-            for result in reader.documents() {
-                let document = match result {
-                    Ok(document) => document,
-                    Err(e) => {
-                        if skip_errors {
-                            cs_eyellowln!(
-                                "[!] failed to parse document '{}' - {}\n",
-                                path.display(),
-                                e
-                            );
-                            continue;
+            for path in &files {
+                let mut reader = Reader::load(path, load_unknown, skip_errors)?;
+                for result in reader.documents() {
+                    let document = match result {
+                        Ok(document) => document,
+                        Err(e) => {
+                            if skip_errors {
+                                cs_eyellowln!(
+                                    "[!] failed to parse document '{}' - {}\n",
+                                    path.display(),
+                                    e
+                                );
+                                continue;
+                            }
+                            return Err(e);
                         }
-                        return Err(e);
-                    }
-                };
-                let value = match document {
-                    Document::Evtx(evtx) => evtx.data,
-                    Document::Hve(json)
-                    | Document::Json(json)
-                    | Document::Xml(json)
-                    | Document::Mft(json)
-                    | Document::Esedb(json) => json,
-                };
-                if json {
-                    if first {
-                        first = false;
+                    };
+                    let value = match document {
+                        Document::Evtx(evtx) => evtx.data,
+                        Document::Hve(json)
+                        | Document::Json(json)
+                        | Document::Xml(json)
+                        | Document::Mft(json)
+                        | Document::Esedb(json) => json,
+                    };
+                    if json {
+                        if first {
+                            first = false;
+                        } else {
+                            cs_println!(",");
+                        }
+                        cs_print_json_pretty!(&value)?;
+                    } else if jsonl {
+                        cs_print_json!(&value)?;
+                        cs_println!();
                     } else {
-                        cs_println!(",");
+                        cs_println!("---");
+                        cs_print_yaml!(&value)?;
                     }
-                    cs_print_json_pretty!(&value)?;
-                } else if jsonl {
-                    cs_print_json!(&value)?;
-                    cs_println!();
-                } else {
-                    cs_println!("---");
-                    cs_print_yaml!(&value)?;
                 }
             }
             if json {
@@ -801,6 +839,7 @@ fn run() -> Result<()> {
             jsonl,
             load_unknown,
             local,
+            match_any,
             output,
             quiet,
             skip_errors,
@@ -874,7 +913,8 @@ fn run() -> Result<()> {
                 .ignore_case(ignore_case)
                 .load_unknown(load_unknown)
                 .local(local)
-                .skip_errors(skip_errors);
+                .skip_errors(skip_errors)
+                .match_any(match_any);
             if let Some(patterns) = additional_pattern {
                 searcher = searcher.patterns(patterns);
             } else if let Some(pattern) = pattern {
